@@ -2,10 +2,6 @@ Zcash 2.0.0-rc1
 <img align="right" width="120" height="80" src="doc/imgs/logo.png">
 ===============
 
-[![Open Source Love](https://badges.frapsoft.com/os/v1/open-source.svg?v=103)](https://github.com/ellerbrock/open-source-badges/)
-![Read the Docs](https://readthedocs.org/projects/zcash/badge/?version=latest&style=flat)
-[![MIT Licence](https://badges.frapsoft.com/os/mit/mit.svg?v=103)](https://opensource.org/licenses/mit-license.php)
-
 What is Zcash?
 --------------
 
