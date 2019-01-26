@@ -206,7 +206,7 @@ CMutableTransaction::CMutableTransaction(const CTransaction& tx) : nVersion(tx.n
                                                                    vjoinsplit(tx.vjoinsplit), joinSplitPubKey(tx.joinSplitPubKey), joinSplitSig(tx.joinSplitSig),
                                                                    bindingSig(tx.bindingSig)
 {
-    
+
 }
 
 uint256 CMutableTransaction::GetHash() const
@@ -302,6 +302,7 @@ CAmount CTransaction::GetValueOut() const
     return nValueOut;
 }
 
+// SAPLINGTODO: make this accurate for all transactions, including sapling
 CAmount CTransaction::GetShieldedValueIn() const
 {
     CAmount nValue = 0;
@@ -319,11 +320,11 @@ CAmount CTransaction::GetShieldedValueIn() const
     {
         // NB: vpub_new "gives" money to the transparent value pool just as inputs do
         nValue += it->vpub_new;
-
+        
         if (!MoneyRange(it->vpub_new) || !MoneyRange(nValue))
             throw std::runtime_error("CTransaction::GetShieldedValueIn(): value out of range");
     }
-
+    
     return nValue;
 }
 
@@ -351,6 +352,36 @@ unsigned int CTransaction::CalculateModifiedSize(unsigned int nTxSize) const
             nTxSize -= offset;
     }
     return nTxSize;
+}
+
+// will return the open time or block if this is a time locked transaction output that we recognize.
+// if we can't determine that it has a valid time lock, it returns 0
+int64_t CTransaction::UnlockTime(uint32_t voutNum) const
+{
+    if (vout.size() > voutNum + 1 && vout[voutNum].scriptPubKey.IsPayToScriptHash())
+    {
+        uint32_t voutNext = voutNum + 1;
+
+        std::vector<uint8_t> opretData;
+        uint160 scriptID = uint160(std::vector<unsigned char>(vout[voutNum].scriptPubKey.begin() + 2, vout[voutNum].scriptPubKey.begin() + 22));
+        CScript::const_iterator it = vout[voutNext].scriptPubKey.begin() + 1;
+
+        opcodetype op;
+        if (vout[voutNext].scriptPubKey.GetOp2(it, op, &opretData))
+        {
+            if (opretData.size() > 0 && opretData.data()[0] == OPRETTYPE_TIMELOCK)
+            {
+                int64_t unlocktime;
+                CScript opretScript = CScript(opretData.begin() + 1, opretData.end());
+                if (Hash160(opretScript) == scriptID &&
+                    opretScript.IsCheckLockTimeVerify(&unlocktime))
+                {
+                    return(unlocktime);
+                }
+            }
+        }
+    }
+    return(0);
 }
 
 std::string CTransaction::ToString() const

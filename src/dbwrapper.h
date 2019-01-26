@@ -99,6 +99,7 @@ public:
     bool Valid();
 
     void SeekToFirst();
+    void SeekToLast();
 
     template<typename K> void Seek(const K& key) {
         CDataStream ssKey(SER_DISK, CLIENT_VERSION);
@@ -109,12 +110,23 @@ public:
     }
 
     void Next();
+    void Prev();
 
     template<typename K> bool GetKey(K& key) {
         leveldb::Slice slKey = piter->key();
         try {
             CDataStream ssKey(slKey.data(), slKey.data() + slKey.size(), SER_DISK, CLIENT_VERSION);
             ssKey >> key;
+        } catch(std::exception &e) {
+            return false;
+        }
+        return true;
+    }
+
+    bool GetKeyDataStream(CDataStream &ssKey) {
+        leveldb::Slice slKey = piter->key();
+        try {
+            ssKey = CDataStream(slKey.data(), slKey.data() + slKey.size(), SER_DISK, CLIENT_VERSION);
         } catch(std::exception &e) {
             return false;
         }
@@ -173,7 +185,7 @@ public:
      * @param[in] fMemory     If true, use leveldb's memory environment.
      * @param[in] fWipe       If true, remove all existing data.
      */
-    CDBWrapper(const boost::filesystem::path& path, size_t nCacheSize, bool fMemory = false, bool fWipe = false);
+    CDBWrapper(const boost::filesystem::path& path, size_t nCacheSize, bool fMemory = false, bool fWipe = false, bool compression = false, int maxOpenFiles = 64);
     ~CDBWrapper();
 
     template <typename K, typename V>

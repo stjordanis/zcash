@@ -34,6 +34,14 @@ public:
         return EncodeBase58Check(data);
     }
 
+    std::string operator()(const CPubKey& key) const
+    {
+        std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::PUBKEY_ADDRESS);
+        CKeyID id = key.GetID();
+        data.insert(data.end(), id.begin(), id.end());
+        return EncodeBase58Check(data);
+    }
+
     std::string operator()(const CScriptID& id) const
     {
         std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::SCRIPT_ADDRESS);
@@ -142,7 +150,7 @@ public:
         return ret;
     }
 
-    std::string operator()(const libzcash::SaplingSpendingKey& zkey) const
+    std::string operator()(const libzcash::SaplingExtendedSpendingKey& zkey) const
     {
         CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
         ss << zkey;
@@ -152,7 +160,7 @@ public:
         // See calculation comment below
         data.reserve((serkey.size() * 8 + 4) / 5);
         ConvertBits<8, 5, true>([&](unsigned char c) { data.push_back(c); }, serkey.begin(), serkey.end());
-        std::string ret = bech32::Encode(m_params.Bech32HRP(CChainParams::SAPLING_SPENDING_KEY), data);
+        std::string ret = bech32::Encode(m_params.Bech32HRP(CChainParams::SAPLING_EXTENDED_SPEND_KEY), data);
         memory_cleanse(serkey.data(), serkey.size());
         memory_cleanse(data.data(), data.size());
         return ret;
@@ -166,7 +174,7 @@ public:
 // regular serialized size in bytes, convert to bits, and then
 // perform ceiling division to get the number of 5-bit clusters.
 const size_t ConvertedSaplingPaymentAddressSize = ((32 + 11) * 8 + 4) / 5;
-const size_t ConvertedSaplingSpendingKeySize = (32 * 8 + 4) / 5;
+const size_t ConvertedSaplingExtendedSpendingKeySize = (ZIP32_XSK_SIZE * 8 + 4) / 5;
 } // namespace
 
 CKey DecodeSecret(const std::string& str)
@@ -286,11 +294,7 @@ libzcash::PaymentAddress DecodePaymentAddress(const std::string& str)
     }
     data.clear();
     auto bech = bech32::Decode(str);
-    bool allowSapling = Params().NetworkIDString() == "regtest" || (
-        Params().NetworkIDString() == "test" &&
-        GetBoolArg("-experimentalfeatures", false) &&
-        GetBoolArg("-developersapling", false));
-    if (allowSapling && bech.first == Params().Bech32HRP(CChainParams::SAPLING_PAYMENT_ADDRESS) &&
+    if (bech.first == Params().Bech32HRP(CChainParams::SAPLING_PAYMENT_ADDRESS) &&
         bech.second.size() == ConvertedSaplingPaymentAddressSize) {
         // Bech32 decoding
         data.reserve((bech.second.size() * 5) / 8);
@@ -304,8 +308,8 @@ libzcash::PaymentAddress DecodePaymentAddress(const std::string& str)
     return libzcash::InvalidEncoding();
 }
 
-bool IsValidPaymentAddressString(const std::string& str) {
-    return IsValidPaymentAddress(DecodePaymentAddress(str));
+bool IsValidPaymentAddressString(const std::string& str, uint32_t consensusBranchId) {
+    return IsValidPaymentAddress(DecodePaymentAddress(str), consensusBranchId);
 }
 
 std::string EncodeViewingKey(const libzcash::ViewingKey& vk)
@@ -356,17 +360,13 @@ libzcash::SpendingKey DecodeSpendingKey(const std::string& str)
     }
     data.clear();
     auto bech = bech32::Decode(str);
-    bool allowSapling = Params().NetworkIDString() == "regtest" || (
-        Params().NetworkIDString() == "test" &&
-        GetBoolArg("-experimentalfeatures", false) &&
-        GetBoolArg("-developersapling", false));
-    if (allowSapling && bech.first == Params().Bech32HRP(CChainParams::SAPLING_SPENDING_KEY) &&
-        bech.second.size() == ConvertedSaplingSpendingKeySize) {
+    if (bech.first == Params().Bech32HRP(CChainParams::SAPLING_EXTENDED_SPEND_KEY) &&
+        bech.second.size() == ConvertedSaplingExtendedSpendingKeySize) {
         // Bech32 decoding
         data.reserve((bech.second.size() * 5) / 8);
         if (ConvertBits<5, 8, false>([&](unsigned char c) { data.push_back(c); }, bech.second.begin(), bech.second.end())) {
             CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
-            libzcash::SaplingSpendingKey ret;
+            libzcash::SaplingExtendedSpendingKey ret;
             ss >> ret;
             memory_cleanse(data.data(), data.size());
             return ret;

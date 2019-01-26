@@ -36,9 +36,10 @@ BOOST_AUTO_TEST_CASE(get_next_work_pow_limit)
     int64_t nLastRetargetTime = 1231006505; // Block #0 of Bitcoin
     int64_t nThisTime = 1233061996;  // Block #2015 of Bitcoin
     arith_uint256 bnAvg;
-    bnAvg.SetCompact(0x1f07ffff);
-    BOOST_CHECK_EQUAL(0x1f07ffff,
-                      CalculateNextWorkRequired(bnAvg, nThisTime, nLastRetargetTime, params));
+    // TODO change once the harder genesis block is generated
+    bnAvg.SetCompact(KOMODO_MINDIFF_NBITS);
+    BOOST_CHECK_EQUAL(KOMODO_MINDIFF_NBITS,
+    CalculateNextWorkRequired(bnAvg, nThisTime, nLastRetargetTime, params));
 }
 
 /* Test the constraint on the lower bound for actual time taken */
@@ -77,10 +78,12 @@ BOOST_AUTO_TEST_CASE(GetBlockProofEquivalentTime_test)
     std::vector<CBlockIndex> blocks(10000);
     for (int i = 0; i < 10000; i++) {
         blocks[i].pprev = i ? &blocks[i - 1] : NULL;
-        blocks[i].nHeight = i;
+        blocks[i].SetHeight(i);
         blocks[i].nTime = 1269211443 + i * params.nPowTargetSpacing;
         blocks[i].nBits = 0x207fffff; /* target 0x7fffff000... */
-        blocks[i].nChainWork = i ? blocks[i - 1].nChainWork + GetBlockProof(blocks[i - 1]) : arith_uint256(0);
+        blocks[i].chainPower = CChainPower(&blocks[i]);
+        if (i != 0)
+            blocks[i].chainPower += GetBlockProof(blocks[i - 1]);
     }
 
     for (int j = 0; j < 1000; j++) {

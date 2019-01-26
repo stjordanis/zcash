@@ -6,18 +6,25 @@
 #ifndef BITCOIN_COINS_H
 #define BITCOIN_COINS_H
 
+#define KOMODO_ENABLE_INTEREST //enabling this is a hardfork, activate with new RR method
+
 #include "compressor.h"
 #include "core_memusage.h"
 #include "memusage.h"
 #include "serialize.h"
 #include "uint256.h"
+#include "base58.h"
+#include "pubkey.h"
 
 #include <assert.h>
 #include <stdint.h>
+#include <vector>
+#include <unordered_map>
 
 #include <boost/foreach.hpp>
 #include <boost/unordered_map.hpp>
 #include "zcash/IncrementalMerkleTree.hpp"
+//#include "veruslaunch.h"
 
 /** 
  * Pruned version of CTransaction: only retains metadata and unspent transaction outputs
@@ -86,12 +93,14 @@ public:
     //! version of the CTransaction; accesses to this value should probably check for nHeight as well,
     //! as new tx version will probably only be introduced at certain heights
     int nVersion;
+    //uint32_t nLockTime;
 
     void FromTx(const CTransaction &tx, int nHeightIn) {
         fCoinBase = tx.IsCoinBase();
         vout = tx.vout;
         nHeight = nHeightIn;
         nVersion = tx.nVersion;
+        //nLockTime = tx.nLockTime;
         ClearUnspendable();
     }
 
@@ -239,6 +248,14 @@ public:
             ret += RecursiveDynamicUsage(out.scriptPubKey);
         }
         return ret;
+    }
+
+    int64_t TotalTxValue() const {
+        int64_t total = 0;
+        BOOST_FOREACH(const CTxOut &out, vout) {
+            total += out.nValue;
+        }
+        return total;
     }
 };
 
@@ -431,13 +448,43 @@ public:
     friend class CCoinsViewCache;
 };
 
+class CTransactionExceptionData
+{
+    public:
+        CScript scriptPubKey;
+        uint64_t voutMask;
+        CTransactionExceptionData() : scriptPubKey(), voutMask() {}
+};
+
+/*class CLaunchMap
+{
+    public:
+        std::unordered_map<std::string, CTransactionExceptionData> lmap;
+        CLaunchMap() : lmap()
+        {
+            //printf("txid: %s -> addr: %s\n", whitelist_ids[i], whitelist_addrs[i]);
+            CBitcoinAddress bcaddr(whitelist_address);
+            CKeyID key;
+            if (bcaddr.GetKeyID_NoCheck(key))
+            {
+                std::vector<unsigned char> address = std::vector<unsigned char>(key.begin(), key.end());
+                for (int i = 0; i < WHITELIST_COUNT; i++)
+                {
+                    std::string hash = uint256S(whitelist_ids[i]).ToString();
+                    lmap[hash].scriptPubKey << OP_DUP << OP_HASH160 << address << OP_EQUALVERIFY << OP_CHECKSIG;
+                    lmap[hash].voutMask = whitelist_masks[i];
+                }
+            }
+        }
+};
+static CLaunchMap launchMap = CLaunchMap();*/
+
 /** CCoinsView that adds a memory cache for transactions to another CCoinsView */
 class CCoinsViewCache : public CCoinsViewBacked
 {
 protected:
     /* Whether this cache has an active modifier. */
     bool hasModifier;
-
 
     /**
      * Make mutable so that we can "fill the cache" even from Get-methods
@@ -460,6 +507,7 @@ public:
     ~CCoinsViewCache();
 
     // Standard CCoinsView methods
+    //static CLaunchMap &LaunchMap() { return launchMap; }
     bool GetSproutAnchorAt(const uint256 &rt, SproutMerkleTree &tree) const;
     bool GetSaplingAnchorAt(const uint256 &rt, SaplingMerkleTree &tree) const;
     bool GetNullifier(const uint256 &nullifier, ShieldedType type) const;
@@ -524,7 +572,7 @@ public:
      * @param[in] tx	transaction for which we are checking input total
      * @return	Sum of value of all inputs (scriptSigs), (positive valueBalance or zero) and JoinSplit vpub_new
      */
-    CAmount GetValueIn(const CTransaction& tx) const;
+    CAmount GetValueIn(int32_t nHeight,int64_t *interestp,const CTransaction& tx,uint32_t prevblocktime) const;
 
     //! Check whether all prevouts of the transaction are present in the UTXO set represented by this view
     bool HaveInputs(const CTransaction& tx) const;
@@ -536,6 +584,8 @@ public:
     double GetPriority(const CTransaction &tx, int nHeight) const;
 
     const CTxOut &GetOutputFor(const CTxIn& input) const;
+    const CScript &GetSpendFor(const CTxIn& input) const;
+    static const CScript &GetSpendFor(const CCoins *coins, const CTxIn& input);
 
     friend class CCoinsModifier;
 

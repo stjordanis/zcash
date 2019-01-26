@@ -65,7 +65,7 @@ std::string DecodeDumpString(const std::string &str) {
     for (unsigned int pos = 0; pos < str.length(); pos++) {
         unsigned char c = str[pos];
         if (c == '%' && pos+2 < str.length()) {
-            c = (((str[pos+1]>>6)*9+((str[pos+1]-'0')&15)) << 4) | 
+            c = (((str[pos+1]>>6)*9+((str[pos+1]-'0')&15)) << 4) |
                 ((str[pos+2]>>6)*9+((str[pos+2]-'0')&15));
             pos += 2;
         }
@@ -78,13 +78,13 @@ UniValue importprivkey(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
         return NullUniValue;
-    
+
     if (fHelp || params.size() < 1 || params.size() > 3)
         throw runtime_error(
-            "importprivkey \"zcashprivkey\" ( \"label\" rescan )\n"
+            "importprivkey \"komodoprivkey\" ( \"label\" rescan )\n"
             "\nAdds a private key (as returned by dumpprivkey) to your wallet.\n"
             "\nArguments:\n"
-            "1. \"zcashprivkey\"   (string, required) The private key (see dumpprivkey)\n"
+            "1. \"komodoprivkey\"   (string, required) The private key (see dumpprivkey)\n"
             "2. \"label\"            (string, optional, default=\"\") An optional label\n"
             "3. rescan               (boolean, optional, default=true) Rescan the wallet for transactions\n"
             "\nNote: This call can take minutes to complete if rescan is true.\n"
@@ -148,7 +148,7 @@ UniValue importaddress(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
         return NullUniValue;
-    
+
     if (fHelp || params.size() < 1 || params.size() > 3)
         throw runtime_error(
             "importaddress \"address\" ( \"label\" rescan )\n"
@@ -178,7 +178,7 @@ UniValue importaddress(const UniValue& params, bool fHelp)
         std::vector<unsigned char> data(ParseHex(params[0].get_str()));
         script = CScript(data.begin(), data.end());
     } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Zcash address or script");
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Komodo address or script");
     }
 
     string strLabel = "";
@@ -244,7 +244,7 @@ UniValue importwallet(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
         return NullUniValue;
-    
+
     if (fHelp || params.size() != 1)
         throw runtime_error(
             "importwallet \"filename\"\n"
@@ -274,7 +274,7 @@ UniValue importwallet_impl(const UniValue& params, bool fHelp, bool fImportZKeys
     if (!file.is_open())
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot open wallet dump file");
 
-    int64_t nTimeBegin = chainActive.Tip()->GetBlockTime();
+    int64_t nTimeBegin = chainActive.LastTip()->GetBlockTime();
 
     bool fGood = true;
 
@@ -297,28 +297,23 @@ UniValue importwallet_impl(const UniValue& params, bool fHelp, bool fImportZKeys
         // Let's see if the address is a valid Zcash spending key
         if (fImportZKeys) {
             auto spendingkey = DecodeSpendingKey(vstr[0]);
+            int64_t nTime = DecodeDumpTime(vstr[1]);
+            // Only include hdKeypath and seedFpStr if we have both
+            boost::optional<std::string> hdKeypath = (vstr.size() > 3) ? boost::optional<std::string>(vstr[2]) : boost::none;
+            boost::optional<std::string> seedFpStr = (vstr.size() > 3) ? boost::optional<std::string>(vstr[3]) : boost::none;
             if (IsValidSpendingKey(spendingkey)) {
-                // TODO: Add Sapling support. For now, ensure we can freely convert.
-                assert(boost::get<libzcash::SproutSpendingKey>(&spendingkey) != nullptr);
-                auto key = boost::get<libzcash::SproutSpendingKey>(spendingkey);
-                auto addr = key.address();
-                if (pwalletMain->HaveSproutSpendingKey(addr)) {
-                    LogPrint("zrpc", "Skipping import of zaddr %s (key already present)\n", EncodePaymentAddress(addr));
-                    continue;
-                }
-                int64_t nTime = DecodeDumpTime(vstr[1]);
-                LogPrint("zrpc", "Importing zaddr %s...\n", EncodePaymentAddress(addr));
-                if (!pwalletMain->AddZKey(key)) {
+                auto addResult = boost::apply_visitor(
+                    AddSpendingKeyToWallet(pwalletMain, Params().GetConsensus(), nTime, hdKeypath, seedFpStr, true), spendingkey);
+                if (addResult == KeyAlreadyExists){
+                    LogPrint("zrpc", "Skipping import of zaddr (key already present)\n");
+                } else if (addResult == KeyNotAdded) {
                     // Something went wrong
                     fGood = false;
-                    continue;
                 }
-                // Successfully imported zaddr.  Now import the metadata.
-                pwalletMain->mapZKeyMetadata[addr].nCreateTime = nTime;
                 continue;
             } else {
                 LogPrint("zrpc", "Importing detected an error: invalid spending key. Trying as a transparent key...\n");
-                // Not a valid spending key, so carry on and see if it's a Zcash style address.
+                // Not a valid spending key, so carry on and see if it's a Zcash style t-address.
             }
         }
 
@@ -360,14 +355,14 @@ UniValue importwallet_impl(const UniValue& params, bool fHelp, bool fImportZKeys
     file.close();
     pwalletMain->ShowProgress("", 100); // hide progress dialog in GUI
 
-    CBlockIndex *pindex = chainActive.Tip();
+    CBlockIndex *pindex = chainActive.LastTip();
     while (pindex && pindex->pprev && pindex->GetBlockTime() > nTimeBegin - 7200)
         pindex = pindex->pprev;
 
     if (!pwalletMain->nTimeFirstKey || nTimeBegin < pwalletMain->nTimeFirstKey)
         pwalletMain->nTimeFirstKey = nTimeBegin;
 
-    LogPrintf("Rescanning last %i blocks\n", chainActive.Height() - pindex->nHeight + 1);
+    LogPrintf("Rescanning last %i blocks\n", chainActive.Height() - pindex->GetHeight() + 1);
     pwalletMain->ScanForWalletTransactions(pindex);
     pwalletMain->MarkDirty();
 
@@ -381,7 +376,7 @@ UniValue dumpprivkey(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
         return NullUniValue;
-    
+
     if (fHelp || params.size() != 1)
         throw runtime_error(
             "dumpprivkey \"t-addr\"\n"
@@ -404,7 +399,7 @@ UniValue dumpprivkey(const UniValue& params, bool fHelp)
     std::string strAddress = params[0].get_str();
     CTxDestination dest = DecodeDestination(strAddress);
     if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Zcash address");
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid transparent address");
     }
     const CKeyID *keyID = boost::get<CKeyID>(&dest);
     if (!keyID) {
@@ -423,13 +418,13 @@ UniValue z_exportwallet(const UniValue& params, bool fHelp)
 {
     if (!EnsureWalletIsAvailable(fHelp))
         return NullUniValue;
-    
+
     if (fHelp || params.size() != 1)
         throw runtime_error(
             "z_exportwallet \"filename\"\n"
             "\nExports all wallet keys, for taddr and zaddr, in a human-readable format.  Overwriting an existing file is not permitted.\n"
             "\nArguments:\n"
-            "1. \"filename\"    (string, required) The filename, saved in folder set by zcashd -exportdir option\n"
+            "1. \"filename\"    (string, required) The filename, saved in folder set by komodod -exportdir option\n"
             "\nResult:\n"
             "\"path\"           (string) The full path of the destination file\n"
             "\nExamples:\n"
@@ -450,7 +445,7 @@ UniValue dumpwallet(const UniValue& params, bool fHelp)
             "dumpwallet \"filename\"\n"
             "\nDumps taddr wallet keys in a human-readable format.  Overwriting an existing file is not permitted.\n"
             "\nArguments:\n"
-            "1. \"filename\"    (string, required) The filename, saved in folder set by zcashd -exportdir option\n"
+            "1. \"filename\"    (string, required) The filename, saved in folder set by komodod -exportdir option\n"
             "\nResult:\n"
             "\"path\"           (string) The full path of the destination file\n"
             "\nExamples:\n"
@@ -474,7 +469,7 @@ UniValue dumpwallet_impl(const UniValue& params, bool fHelp, bool fDumpZKeys)
         throw JSONRPCError(RPC_INTERNAL_ERROR, e.what());
     }
     if (exportdir.empty()) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot export wallet until the zcashd -exportdir option has been set");
+        throw JSONRPCError(RPC_WALLET_ERROR, "Cannot export wallet until the komodod -exportdir option has been set");
     }
     std::string unclean = params[0].get_str();
     std::string clean = SanitizeFilename(unclean);
@@ -506,10 +501,17 @@ UniValue dumpwallet_impl(const UniValue& params, bool fHelp, bool fDumpZKeys)
     std::sort(vKeyBirth.begin(), vKeyBirth.end());
 
     // produce output
-    file << strprintf("# Wallet dump created by Zcash %s (%s)\n", CLIENT_BUILD, CLIENT_DATE);
+    file << strprintf("# Wallet dump created by Komodo %s (%s)\n", CLIENT_BUILD, CLIENT_DATE);
     file << strprintf("# * Created on %s\n", EncodeDumpTime(GetTime()));
     file << strprintf("# * Best block at time of backup was %i (%s),\n", chainActive.Height(), chainActive.Tip()->GetBlockHash().ToString());
     file << strprintf("#   mined on %s\n", EncodeDumpTime(chainActive.Tip()->GetBlockTime()));
+    {
+        HDSeed hdSeed;
+        pwalletMain->GetHDSeed(hdSeed);
+        auto rawSeed = hdSeed.RawSeed();
+        file << strprintf("# HDSeed=%s fingerprint=%s", HexStr(rawSeed.begin(), rawSeed.end()), hdSeed.Fingerprint().GetHex());
+        file << "\n";
+    }
     file << "\n";
     for (std::vector<std::pair<int64_t, CKeyID> >::const_iterator it = vKeyBirth.begin(); it != vKeyBirth.end(); it++) {
         const CKeyID &keyid = it->second;
@@ -529,16 +531,35 @@ UniValue dumpwallet_impl(const UniValue& params, bool fHelp, bool fDumpZKeys)
     file << "\n";
 
     if (fDumpZKeys) {
-        std::set<libzcash::SproutPaymentAddress> addresses;
-        pwalletMain->GetSproutPaymentAddresses(addresses);
+        std::set<libzcash::SproutPaymentAddress> sproutAddresses;
+        pwalletMain->GetSproutPaymentAddresses(sproutAddresses);
         file << "\n";
         file << "# Zkeys\n";
         file << "\n";
-        for (auto addr : addresses ) {
+        for (auto addr : sproutAddresses) {
             libzcash::SproutSpendingKey key;
             if (pwalletMain->GetSproutSpendingKey(addr, key)) {
-                std::string strTime = EncodeDumpTime(pwalletMain->mapZKeyMetadata[addr].nCreateTime);
+                std::string strTime = EncodeDumpTime(pwalletMain->mapSproutZKeyMetadata[addr].nCreateTime);
                 file << strprintf("%s %s # zaddr=%s\n", EncodeSpendingKey(key), strTime, EncodePaymentAddress(addr));
+            }
+        }
+        std::set<libzcash::SaplingPaymentAddress> saplingAddresses;
+        pwalletMain->GetSaplingPaymentAddresses(saplingAddresses);
+        file << "\n";
+        file << "# Sapling keys\n";
+        file << "\n";
+        for (auto addr : saplingAddresses) {
+            libzcash::SaplingExtendedSpendingKey extsk;
+            if (pwalletMain->GetSaplingExtendedSpendingKey(addr, extsk)) {
+                auto ivk = extsk.expsk.full_viewing_key().in_viewing_key();
+                CKeyMetadata keyMeta = pwalletMain->mapSaplingZKeyMetadata[ivk];
+                std::string strTime = EncodeDumpTime(keyMeta.nCreateTime);
+                // Keys imported with z_importkey do not have zip32 metadata
+                if (keyMeta.hdKeypath.empty() || keyMeta.seedFp.IsNull()) {
+                    file << strprintf("%s %s # zaddr=%s\n", EncodeSpendingKey(extsk), strTime, EncodePaymentAddress(addr));
+                } else {
+                    file << strprintf("%s %s %s %s # zaddr=%s\n", EncodeSpendingKey(extsk), strTime, keyMeta.hdKeypath, keyMeta.seedFp.GetHex(), EncodePaymentAddress(addr));
+                }
             }
         }
         file << "\n";
@@ -549,58 +570,6 @@ UniValue dumpwallet_impl(const UniValue& params, bool fHelp, bool fDumpZKeys)
 
     return exportfilepath.string();
 }
-
-class AddSpendingKeyToWallet : public boost::static_visitor<bool>
-{
-private:
-    CWallet *m_wallet;
-public: 
-    AddSpendingKeyToWallet(CWallet *wallet) : m_wallet(wallet) {}
-
-    bool operator()(const libzcash::SproutSpendingKey &sk) const {
-        auto addr = sk.address();
-        // Don't throw error in case a key is already there
-        if (m_wallet->HaveSproutSpendingKey(addr)) {
-            return true;
-        } else {
-            m_wallet->MarkDirty();
-
-            if (!m_wallet-> AddZKey(sk)) {
-                throw JSONRPCError(RPC_WALLET_ERROR, "Error adding spending key to wallet");
-            }
-
-            m_wallet->mapZKeyMetadata[addr].nCreateTime = 1;
-            
-            return false;
-        }
-    }
-    
-    bool operator()(const libzcash::SaplingSpendingKey &sk) const {
-        auto fvk = sk.full_viewing_key();
-        auto addr = sk.default_address();
-        {
-            // Don't throw error in case a key is already there
-            if (m_wallet->HaveSaplingSpendingKey(fvk)) {
-                return true;
-            } else {
-                m_wallet->MarkDirty();
-    
-                if (!m_wallet-> AddSaplingZKey(sk, addr)) {
-                    throw JSONRPCError(RPC_WALLET_ERROR, "Error adding spending key to wallet");
-                }
-    
-                m_wallet->mapSaplingZKeyMetadata[addr].nCreateTime = 1;
-                
-                return false;
-            }    
-        }
-    }
-    
-    bool operator()(const libzcash::InvalidEncoding& no) const { 
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid spending key");
-    }
-    
-};
 
 
 UniValue z_importkey(const UniValue& params, bool fHelp)
@@ -672,11 +641,15 @@ UniValue z_importkey(const UniValue& params, bool fHelp)
     if (!IsValidSpendingKey(spendingkey)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid spending key");
     }
-    
+
     // Sapling support
-    auto keyAlreadyExists = boost::apply_visitor(AddSpendingKeyToWallet(pwalletMain), spendingkey);
-    if (keyAlreadyExists && fIgnoreExistingKey) {
+    auto addResult = boost::apply_visitor(AddSpendingKeyToWallet(pwalletMain, Params().GetConsensus()), spendingkey);
+    if (addResult == KeyAlreadyExists && fIgnoreExistingKey) {
         return NullUniValue;
+    }
+    pwalletMain->MarkDirty();
+    if (addResult == KeyNotAdded) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error adding spending key to wallet");
     }
     
     // whenever a key is imported, we need to scan the whole chain
@@ -752,8 +725,10 @@ UniValue z_importviewingkey(const UniValue& params, bool fHelp)
     if (!IsValidViewingKey(viewingkey)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewing key");
     }
-    // TODO: Add Sapling support. For now, ensure we can freely convert.
-    assert(boost::get<libzcash::SproutViewingKey>(&viewingkey) != nullptr);
+    // TODO: Add Sapling support. For now, return an error to the user.
+    if (boost::get<libzcash::SproutViewingKey>(&viewingkey) == nullptr) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Currently, only Sprout viewing keys are supported");
+    }
     auto vkey = boost::get<libzcash::SproutViewingKey>(viewingkey);
     auto addr = vkey.address();
 
@@ -783,41 +758,6 @@ UniValue z_importviewingkey(const UniValue& params, bool fHelp)
 
     return NullUniValue;
 }
-
-class GetSpendingKeyForPaymentAddress : public boost::static_visitor<libzcash::SpendingKey>
-{
-private:
-    CWallet *m_wallet;
-public:
-    GetSpendingKeyForPaymentAddress(CWallet *wallet) : m_wallet(wallet) {}
-
-    libzcash::SpendingKey operator()(const libzcash::SproutPaymentAddress &zaddr) const
-    {
-        libzcash::SproutSpendingKey k;
-        if (!pwalletMain->GetSproutSpendingKey(zaddr, k)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Wallet does not hold private zkey for this zaddr");
-        }
-        return k;
-    }
-
-    libzcash::SpendingKey operator()(const libzcash::SaplingPaymentAddress &zaddr) const 
-    {
-        libzcash::SaplingIncomingViewingKey ivk;
-        libzcash::SaplingFullViewingKey fvk;
-        libzcash::SaplingSpendingKey sk;
-
-        if (!pwalletMain->GetSaplingIncomingViewingKey(zaddr, ivk) ||
-            !pwalletMain->GetSaplingFullViewingKey(ivk, fvk) ||
-            !pwalletMain->GetSaplingSpendingKey(fvk, sk)) {
-            throw JSONRPCError(RPC_WALLET_ERROR, "Wallet does not hold private zkey for this zaddr");
-        }
-        return sk;
-    }
-    
-    libzcash::SpendingKey operator()(const libzcash::InvalidEncoding& no) const { 
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid zaddr");
-    }
-};
 
 UniValue z_exportkey(const UniValue& params, bool fHelp)
 {
@@ -852,7 +792,10 @@ UniValue z_exportkey(const UniValue& params, bool fHelp)
 
     // Sapling support
     auto sk = boost::apply_visitor(GetSpendingKeyForPaymentAddress(pwalletMain), address);
-    return EncodeSpendingKey(sk);
+    if (!sk) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Wallet does not hold private zkey for this zaddr");
+    }
+    return EncodeSpendingKey(sk.get());
 }
 
 UniValue z_exportviewingkey(const UniValue& params, bool fHelp)
@@ -884,8 +827,10 @@ UniValue z_exportviewingkey(const UniValue& params, bool fHelp)
     if (!IsValidPaymentAddress(address)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid zaddr");
     }
-    // TODO: Add Sapling support. For now, ensure we can freely convert.
-    assert(boost::get<libzcash::SproutPaymentAddress>(&address) != nullptr);
+    // TODO: Add Sapling support. For now, return an error to the user.
+    if (boost::get<libzcash::SproutPaymentAddress>(&address) == nullptr) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Currently, only Sprout zaddrs are supported");
+    }
     auto addr = boost::get<libzcash::SproutPaymentAddress>(address);
 
     libzcash::SproutViewingKey vk;

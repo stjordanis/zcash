@@ -19,6 +19,11 @@
 
 #include <stdio.h>
 
+#ifdef _WIN32
+#define frpintf(...)
+#define printf(...)
+#endif
+
 /* Introduction text for doxygen: */
 
 /*! \mainpage Developer documentation
@@ -36,6 +41,12 @@
  */
 
 static bool fDaemon;
+#include "komodo_defs.h"
+#define KOMODO_ASSETCHAIN_MAXLEN 65
+extern char ASSETCHAINS_SYMBOL[KOMODO_ASSETCHAIN_MAXLEN];
+void komodo_passport_iteration();
+uint64_t komodo_interestsum();
+int32_t komodo_longestchain();
 
 void WaitForShutdown(boost::thread_group* threadGroup)
 {
@@ -43,7 +54,18 @@ void WaitForShutdown(boost::thread_group* threadGroup)
     // Tell the main threads to shutdown.
     while (!fShutdown)
     {
-        MilliSleep(200);
+        //fprintf(stderr,"call passport iteration\n");
+        if ( ASSETCHAINS_SYMBOL[0] == 0 )
+        {
+            komodo_passport_iteration();
+            MilliSleep(10000);
+        }
+        else
+        {
+            //komodo_interestsum();
+            //komodo_longestchain();
+            MilliSleep(20000);
+        }
         fShutdown = ShutdownRequested();
     }
     if (threadGroup)
@@ -57,6 +79,11 @@ void WaitForShutdown(boost::thread_group* threadGroup)
 //
 // Start
 //
+extern int32_t IS_KOMODO_NOTARY,USE_EXTERNAL_PUBKEY,ASSETCHAIN_INIT;
+extern std::string NOTARY_PUBKEY;
+int32_t komodo_is_issuer();
+void komodo_passport_iteration();
+
 bool AppInit(int argc, char* argv[])
 {
     boost::thread_group threadGroup;
@@ -67,12 +94,13 @@ bool AppInit(int argc, char* argv[])
     //
     // Parameters
     //
+    // If Qt is used, parameters/komodo.conf are parsed in qt/bitcoin.cpp's main()
     ParseParameters(argc, argv);
 
     // Process help and version before taking care about datadir
     if (mapArgs.count("-?") || mapArgs.count("-h") ||  mapArgs.count("-help") || mapArgs.count("-version"))
     {
-        std::string strUsage = _("Zcash Daemon") + " " + _("version") + " " + FormatFullVersion() + "\n" + PrivacyInfo();
+        std::string strUsage = _("Komodo Daemon") + " " + _("version") + " " + FormatFullVersion() + "\n" + PrivacyInfo();
 
         if (mapArgs.count("-version"))
         {
@@ -81,7 +109,7 @@ bool AppInit(int argc, char* argv[])
         else
         {
             strUsage += "\n" + _("Usage:") + "\n" +
-                  "  zcashd [options]                     " + _("Start Zcash Daemon") + "\n";
+                  "  komodod [options]                     " + _("Start Komodo Daemon") + "\n";
 
             strUsage += "\n" + HelpMessage(HMM_BITCOIND);
         }
@@ -92,6 +120,20 @@ bool AppInit(int argc, char* argv[])
 
     try
     {
+        void komodo_args(char *argv0);
+        komodo_args(argv[0]);
+        fprintf(stderr,"call komodo_args.(%s) NOTARY_PUBKEY.(%s)\n",argv[0],NOTARY_PUBKEY.c_str());
+        while ( ASSETCHAIN_INIT == 0 )
+        {
+            //if ( komodo_is_issuer() != 0 )
+            //    komodo_passport_iteration();
+            #ifdef _WIN32
+            boost::this_thread::sleep_for(boost::chrono::seconds(1));
+            #else
+            sleep(1);
+            #endif
+        }
+        printf("initialized %s at %u\n",ASSETCHAINS_SYMBOL,(uint32_t)time(NULL));
         if (!boost::filesystem::is_directory(GetDataDir(false)))
         {
             fprintf(stderr, "Error: Specified data directory \"%s\" does not exist.\n", mapArgs["-datadir"].c_str());
@@ -102,21 +144,21 @@ bool AppInit(int argc, char* argv[])
             ReadConfigFile(mapArgs, mapMultiArgs);
         } catch (const missing_zcash_conf& e) {
             fprintf(stderr,
-                (_("Before starting zcashd, you need to create a configuration file:\n"
+                (_("Before starting komodod, you need to create a configuration file:\n"
                    "%s\n"
                    "It can be completely empty! That indicates you are happy with the default\n"
-                   "configuration of zcashd. But requiring a configuration file to start ensures\n"
-                   "that zcashd won't accidentally compromise your privacy if there was a default\n"
+                   "configuration of komodod. But requiring a configuration file to start ensures\n"
+                   "that komodod won't accidentally compromise your privacy if there was a default\n"
                    "option you needed to change.\n"
                    "\n"
                    "You can look at the example configuration file for suggestions of default\n"
                    "options that you may want to change. It should be in one of these locations,\n"
-                   "depending on how you installed Zcash:\n") +
+                   "depending on how you installed Komodo:\n") +
                  _("- Source code:  %s\n"
                    "- .deb package: %s\n")).c_str(),
                 GetConfigFile().string().c_str(),
-                "contrib/debian/examples/zcash.conf",
-                "/usr/share/doc/zcash/examples/zcash.conf");
+                "contrib/debian/examples/komodo.conf",
+                "/usr/share/doc/komodo/examples/komodo.conf");
             return false;
         } catch (const std::exception& e) {
             fprintf(stderr,"Error reading configuration file: %s\n", e.what());
@@ -131,19 +173,20 @@ bool AppInit(int argc, char* argv[])
         // Command-line RPC
         bool fCommandLine = false;
         for (int i = 1; i < argc; i++)
-            if (!IsSwitchChar(argv[i][0]) && !boost::algorithm::istarts_with(argv[i], "zcash:"))
+            if (!IsSwitchChar(argv[i][0]) && !boost::algorithm::istarts_with(argv[i], "komodo:"))
                 fCommandLine = true;
 
         if (fCommandLine)
         {
-            fprintf(stderr, "Error: There is no RPC client functionality in zcashd. Use the zcash-cli utility instead.\n");
+            fprintf(stderr, "Error: There is no RPC client functionality in komodod. Use the komodo-cli utility instead.\n");
             exit(EXIT_FAILURE);
         }
-#ifndef WIN32
+
+#ifndef _WIN32
         fDaemon = GetBoolArg("-daemon", false);
         if (fDaemon)
         {
-            fprintf(stdout, "Zcash server starting\n");
+            fprintf(stdout, "Komodo %s server starting\n",ASSETCHAINS_SYMBOL);
 
             // Daemonize
             pid_t pid = fork();
@@ -172,7 +215,6 @@ bool AppInit(int argc, char* argv[])
     } catch (...) {
         PrintExceptionContinue(NULL, "AppInit()");
     }
-
     if (!fRet)
     {
         Interrupt(threadGroup);

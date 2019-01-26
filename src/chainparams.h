@@ -11,6 +11,8 @@
 #include "primitives/block.h"
 #include "protocol.h"
 
+#define KOMODO_MINDIFF_NBITS 0x200f0f0f
+
 #include <vector>
 
 struct CDNSSeedData {
@@ -25,12 +27,6 @@ struct SeedSpec6 {
 
 typedef std::map<int, uint256> MapCheckpoints;
 
-struct CCheckpointData {
-    MapCheckpoints mapCheckpoints;
-    int64_t nTimeLastCheckpoint;
-    int64_t nTransactionsLastCheckpoint;
-    double fTransactionsPerDay;
-};
 
 /**
  * CChainParams defines various tweakable parameters of a given instance of the
@@ -55,12 +51,18 @@ public:
 
         MAX_BASE58_TYPES
     };
+    struct CCheckpointData {
+        MapCheckpoints mapCheckpoints;
+        int64_t nTimeLastCheckpoint;
+        int64_t nTransactionsLastCheckpoint;
+        double fTransactionsPerDay;
+    };
 
     enum Bech32Type {
         SAPLING_PAYMENT_ADDRESS,
         SAPLING_FULL_VIEWING_KEY,
         SAPLING_INCOMING_VIEWING_KEY,
-        SAPLING_SPENDING_KEY,
+        SAPLING_EXTENDED_SPEND_KEY,
 
         MAX_BECH32_TYPES
     };
@@ -99,13 +101,24 @@ public:
     std::string GetFoundersRewardAddressAtIndex(int i) const;
     /** Enforce coinbase consensus rule in regtest mode */
     void SetRegTestCoinbaseMustBeProtected() { consensus.fCoinbaseMustBeProtected = true; }
+
+    void SetDefaultPort(uint16_t port) { nDefaultPort = port; }
+    void SetCheckpointData(CCheckpointData checkpointData);
+
+    //void setnonce(uint32_t nonce) { memcpy(&genesis.nNonce,&nonce,sizeof(nonce)); }
+    //void settimestamp(uint32_t timestamp) { genesis.nTime = timestamp; }
+    //void setgenesis(CBlock &block) { genesis = block; }
+    //void recalc_genesis(uint32_t nonce) { genesis = CreateGenesisBlock(ASSETCHAINS_TIMESTAMP, nonce, GENESIS_NBITS, 1, COIN); };
+    CMessageHeader::MessageStartChars pchMessageStart; // jl777 moved
+    Consensus::Params consensus;
+
 protected:
     CChainParams() {}
 
-    Consensus::Params consensus;
-    CMessageHeader::MessageStartChars pchMessageStart;
-    //! Raw pub key bytes for the broadcast alert signing key.
+     //! Raw pub key bytes for the broadcast alert signing key.
     std::vector<unsigned char> vAlertPubKey;
+    int nMinerThreads = 0;
+    long nMaxTipAge = 0;
     int nDefaultPort = 0;
     uint64_t nPruneAfterHeight = 0;
     unsigned int nEquihashN = 0;

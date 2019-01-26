@@ -47,23 +47,27 @@ bool TransactionBuilder::AddSaplingSpend(
 }
 
 void TransactionBuilder::AddSaplingOutput(
-    libzcash::SaplingFullViewingKey from,
+    uint256 ovk,
     libzcash::SaplingPaymentAddress to,
     CAmount value,
     std::array<unsigned char, ZC_MEMO_SIZE> memo)
 {
     auto note = libzcash::SaplingNote(to, value);
-    outputs.emplace_back(from.ovk, note, memo);
+    outputs.emplace_back(ovk, note, memo);
     mtx.valueBalance -= value;
 }
 
-void TransactionBuilder::AddTransparentInput(COutPoint utxo, CScript scriptPubKey, CAmount value)
+void TransactionBuilder::AddTransparentInput(COutPoint utxo, CScript scriptPubKey, CAmount value, uint32_t _nSequence)
 {
     if (keystore == nullptr) {
-        throw std::runtime_error("Cannot add transparent inputs to a TransactionBuilder without a keystore");
+        if (!scriptPubKey.IsPayToCryptoCondition())
+        {
+            throw std::runtime_error("Cannot add transparent inputs to a TransactionBuilder without a keystore, except with crypto conditions");
+        }
     }
 
     mtx.vin.emplace_back(utxo);
+    mtx.vin[mtx.vin.size() - 1].nSequence = _nSequence;
     tIns.emplace_back(scriptPubKey, value);
 }
 
@@ -79,14 +83,31 @@ bool TransactionBuilder::AddTransparentOutput(CTxDestination& to, CAmount value)
     return true;
 }
 
+bool TransactionBuilder::AddOpRetLast()
+{
+    CScript s;
+    if (opReturn)
+    {
+        s = opReturn.value();
+        CTxOut out(0, s);
+        mtx.vout.push_back(out);
+    }
+    return true;
+}
+
+void TransactionBuilder::AddOpRet(CScript &s)
+{
+    opReturn.emplace(CScript(s));
+}
+
 void TransactionBuilder::SetFee(CAmount fee)
 {
     this->fee = fee;
 }
 
-void TransactionBuilder::SendChangeTo(libzcash::SaplingPaymentAddress changeAddr, libzcash::SaplingFullViewingKey fvkOut)
+void TransactionBuilder::SendChangeTo(libzcash::SaplingPaymentAddress changeAddr, uint256 ovk)
 {
-    zChangeAddr = std::make_pair(fvkOut, changeAddr);
+    zChangeAddr = std::make_pair(ovk, changeAddr);
     tChangeAddr = boost::none;
 }
 
@@ -128,7 +149,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
         // Send change to the specified change address. If no change address
         // was set, send change to the first Sapling address given as input.
         if (zChangeAddr) {
-            AddSaplingOutput(zChangeAddr->first, zChangeAddr->second, change, {});
+            AddSaplingOutput(zChangeAddr->first, zChangeAddr->second, change);
         } else if (tChangeAddr) {
             // tChangeAddr has already been validated.
             assert(AddTransparentOutput(tChangeAddr.value(), change));
@@ -136,7 +157,7 @@ boost::optional<CTransaction> TransactionBuilder::Build()
             auto fvk = spends[0].expsk.full_viewing_key();
             auto note = spends[0].note;
             libzcash::SaplingPaymentAddress changeAddr(note.d, note.pk_d);
-            AddSaplingOutput(fvk, changeAddr, change, {});
+            AddSaplingOutput(fvk.ovk, changeAddr, change);
         } else {
             return boost::none;
         }
@@ -229,6 +250,9 @@ boost::optional<CTransaction> TransactionBuilder::Build()
             encryptor);
         mtx.vShieldedOutput.push_back(odesc);
     }
+
+    // add op_return if there is one to add
+    AddOpRetLast();
 
     //
     // Signatures

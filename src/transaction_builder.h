@@ -65,10 +65,14 @@ private:
     std::vector<OutputDescriptionInfo> outputs;
     std::vector<TransparentInputInfo> tIns;
 
-    boost::optional<std::pair<libzcash::SaplingFullViewingKey, libzcash::SaplingPaymentAddress>> zChangeAddr;
+    boost::optional<std::pair<uint256, libzcash::SaplingPaymentAddress>> zChangeAddr;
     boost::optional<CTxDestination> tChangeAddr;
+    boost::optional<CScript> opReturn;
+
+    bool AddOpRetLast(CScript &s);
 
 public:
+    TransactionBuilder() {}
     TransactionBuilder(const Consensus::Params& consensusParams, int nHeight, CKeyStore* keyStore = nullptr);
 
     void SetFee(CAmount fee);
@@ -82,19 +86,25 @@ public:
         SaplingWitness witness);
 
     void AddSaplingOutput(
-        libzcash::SaplingFullViewingKey from,
+        uint256 ovk,
         libzcash::SaplingPaymentAddress to,
         CAmount value,
-        std::array<unsigned char, ZC_MEMO_SIZE> memo);
+        std::array<unsigned char, ZC_MEMO_SIZE> memo = {{0}});
 
     // Assumes that the value correctly corresponds to the provided UTXO.
-    void AddTransparentInput(COutPoint utxo, CScript scriptPubKey, CAmount value);
+    void AddTransparentInput(COutPoint utxo, CScript scriptPubKey, CAmount value, uint32_t nSequence = 0xffffffff);
 
     bool AddTransparentOutput(CTxDestination& to, CAmount value);
 
-    void SendChangeTo(libzcash::SaplingPaymentAddress changeAddr, libzcash::SaplingFullViewingKey fvkOut);
+    void AddOpRet(CScript &s);
+
+    bool AddOpRetLast();
+
+    void SendChangeTo(libzcash::SaplingPaymentAddress changeAddr, uint256 ovk);
 
     bool SendChangeTo(CTxDestination& changeAddr);
+
+    void SetLockTime(uint32_t time) { this->mtx.nLockTime = time; }
 
     boost::optional<CTransaction> Build();
 };

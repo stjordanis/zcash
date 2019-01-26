@@ -12,7 +12,14 @@
 #include "serialize.h"
 #include "streams.h"
 #include "uint256.h"
+#include "arith_uint256.h"
 #include "consensus/consensus.h"
+#include "hash.h"
+#include "nonce.h"
+
+#ifndef __APPLE__
+#include <stdint.h>
+#endif
 
 #include <array>
 
@@ -22,6 +29,8 @@
 #include "zcash/Zcash.h"
 #include "zcash/JoinSplit.hpp"
 #include "zcash/Proof.hpp"
+
+extern uint32_t ASSETCHAINS_MAGIC;
 
 // Overwinter transaction version
 static const int32_t OVERWINTER_TX_VERSION = 3;
@@ -420,7 +429,7 @@ class CTxOut
 public:
     CAmount nValue;
     CScript scriptPubKey;
-
+    uint64_t interest;
     CTxOut()
     {
         SetNull();
@@ -473,8 +482,7 @@ public:
 
     friend bool operator==(const CTxOut& a, const CTxOut& b)
     {
-        return (a.nValue       == b.nValue &&
-                a.scriptPubKey == b.scriptPubKey);
+        return (a.nValue == b.nValue && a.scriptPubKey == b.scriptPubKey);
     }
 
     friend bool operator!=(const CTxOut& a, const CTxOut& b)
@@ -671,9 +679,21 @@ public:
     // Compute modified tx size for priority calculation (optionally given tx size)
     unsigned int CalculateModifiedSize(unsigned int nTxSize=0) const;
 
+    bool IsMint() const
+    {
+        return IsCoinImport() || IsCoinBase();
+    }
+
     bool IsCoinBase() const
     {
         return (vin.size() == 1 && vin[0].prevout.IsNull());
+    }
+
+    int64_t UnlockTime(uint32_t voutNum) const;
+
+    bool IsCoinImport() const
+    {
+        return (vin.size() == 1 && vin[0].prevout.n == 10e8);
     }
 
     friend bool operator==(const CTransaction& a, const CTransaction& b)
@@ -684,6 +704,42 @@ public:
     friend bool operator!=(const CTransaction& a, const CTransaction& b)
     {
         return a.hash != b.hash;
+    }
+
+    // verus hash will be the same for a given txid, output number, block height, and blockhash of 100 blocks past
+    static uint256 _GetVerusPOSHash(CPOSNonce *pNonce, const uint256 &txid, int32_t voutNum, int32_t height, const uint256 &pastHash, int64_t value)
+    {
+        pNonce->SetPOSEntropy(pastHash, txid, voutNum);
+        CVerusHashWriter hashWriter  = CVerusHashWriter(SER_GETHASH, PROTOCOL_VERSION);
+
+        hashWriter << ASSETCHAINS_MAGIC;
+
+        // we only use the new style of POS hash after changeover and 100 blocks of enforced proper nonce updating
+        if (CPOSNonce::NewPOSActive(height))
+        {
+            hashWriter << *pNonce;
+            hashWriter << height;
+            return ArithToUint256(UintToArith256(hashWriter.GetHash()) / value);
+        }
+        else
+        {
+            hashWriter << pastHash;
+            hashWriter << height;
+            hashWriter << txid;
+            hashWriter << voutNum;
+            return ArithToUint256(UintToArith256(hashWriter.GetHash()) / value);
+        }
+    }
+
+    // Nonce is modified to include the transaction information
+    uint256 GetVerusPOSHash(CPOSNonce *pNonce, int32_t voutNum, int32_t height, const uint256 &pastHash) const
+    {
+        uint256 txid = GetHash();
+
+        if (voutNum >= vout.size())
+            return uint256S("ff0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f");
+
+        return _GetVerusPOSHash(pNonce, txid, voutNum, height, pastHash, (uint64_t)vout[voutNum].nValue);
     }
 
     std::string ToString() const;

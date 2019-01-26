@@ -8,6 +8,7 @@
 #include "asyncrpcoperation.h"
 #include "amount.h"
 #include "primitives/transaction.h"
+#include "transaction_builder.h"
 #include "zcash/JoinSplit.hpp"
 #include "zcash/Address.hpp"
 #include "wallet.h"
@@ -28,7 +29,7 @@ using namespace libzcash;
 typedef std::tuple<std::string, CAmount, std::string> SendManyRecipient;
 
 // Input UTXO is a tuple (quadruple) of txid, vout, amount, coinbase)
-typedef std::tuple<uint256, int, CAmount, bool> SendManyInputUTXO;
+typedef std::tuple<uint256, int, CAmount, bool, CTxDestination> SendManyInputUTXO;
 
 // Input JSOP is a tuple of JSOutpoint, note and amount
 typedef std::tuple<JSOutPoint, SproutNote, CAmount> SendManyInputJSOP;
@@ -51,7 +52,15 @@ struct WitnessAnchorData {
 
 class AsyncRPCOperation_sendmany : public AsyncRPCOperation {
 public:
-    AsyncRPCOperation_sendmany(CMutableTransaction contextualTx, std::string fromAddress, std::vector<SendManyRecipient> tOutputs, std::vector<SendManyRecipient> zOutputs, int minDepth, CAmount fee = ASYNC_RPC_OPERATION_DEFAULT_MINERS_FEE, UniValue contextInfo = NullUniValue);
+    AsyncRPCOperation_sendmany(
+        boost::optional<TransactionBuilder> builder,
+        CMutableTransaction contextualTx,
+        std::string fromAddress,
+        std::vector<SendManyRecipient> tOutputs,
+        std::vector<SendManyRecipient> zOutputs,
+        int minDepth,
+        CAmount fee = ASYNC_RPC_OPERATION_DEFAULT_MINERS_FEE,
+        UniValue contextInfo = NullUniValue);
     virtual ~AsyncRPCOperation_sendmany();
     
     // We don't want to be copied or moved around
@@ -66,13 +75,14 @@ public:
 
     bool testmode = false;  // Set to true to disable sending txs and generating proofs
 
-    bool paymentDisclosureMode = false; // Set to true to save esk for encrypted notes in payment disclosure database.
+    bool paymentDisclosureMode = true; // Set to true to save esk for encrypted notes in payment disclosure database.
 
 private:
     friend class TEST_FRIEND_AsyncRPCOperation_sendmany;    // class for unit testing
 
     UniValue contextinfo_;     // optional data to include in return value from getStatus()
 
+    bool isUsingBuilder_; // Indicates that no Sprout addresses are involved
     uint32_t consensusBranchId_;
     CAmount fee_;
     int mindepth_;
@@ -92,11 +102,13 @@ private:
     std::vector<SendManyRecipient> t_outputs_;
     std::vector<SendManyRecipient> z_outputs_;
     std::vector<SendManyInputUTXO> t_inputs_;
-    std::vector<SendManyInputJSOP> z_inputs_;
-    
+    std::vector<SendManyInputJSOP> z_sprout_inputs_;
+    std::vector<SaplingNoteEntry> z_sapling_inputs_;
+
+    TransactionBuilder builder_;
     CTransaction tx_;
    
-    void add_taddr_change_output_to_tx(CAmount amount);
+    void add_taddr_change_output_to_tx(CBitcoinAddress *fromaddress,CAmount amount);
     void add_taddr_outputs_to_tx();
     bool find_unspent_notes();
     bool find_utxos(bool fAcceptCoinbase);
@@ -140,7 +152,7 @@ public:
     // Delegated methods
     
     void add_taddr_change_output_to_tx(CAmount amount) {
-        delegate->add_taddr_change_output_to_tx(amount);
+        delegate->add_taddr_change_output_to_tx(0,amount);
     }
     
     void add_taddr_outputs_to_tx() {
